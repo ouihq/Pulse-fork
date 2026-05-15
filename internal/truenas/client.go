@@ -171,7 +171,7 @@ func (c *Client) GetSystemInfo(ctx context.Context) (*SystemInfo, error) {
 		Hostname:         strings.TrimSpace(response.Hostname),
 		Version:          strings.TrimSpace(response.Version),
 		Build:            build,
-		UptimeSeconds:    response.UptimeSeconds,
+		UptimeSeconds:    int64(response.UptimeSeconds),
 		Healthy:          true,
 		MachineID:        machineID,
 		CPUCount:         cpuCount,
@@ -2910,7 +2910,7 @@ type systemInfoResponse struct {
 	Hostname      string    `json:"hostname"`
 	Version       string    `json:"version"`
 	BuildTime     mongoDate `json:"buildtime"`
-	UptimeSeconds int64     `json:"uptime_seconds"`
+	UptimeSeconds float64   `json:"uptime_seconds"`
 	SystemSerial  string    `json:"system_serial"`
 	SystemVendor  string    `json:"system_manufacturer"`
 	Cores         int       `json:"cores"`
