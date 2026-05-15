@@ -158,7 +158,7 @@ func (c *Client) GetSystemInfo(ctx context.Context) (*SystemInfo, error) {
 		machineID = strings.TrimSpace(response.Hostname)
 	}
 
-	build := strings.TrimSpace(response.BuildTime)
+	build := response.BuildTime.String()
 	if build == "" {
 		build = strings.TrimSpace(response.Version)
 	}
@@ -495,18 +495,13 @@ func (c *Client) GetAlerts(ctx context.Context) ([]Alert, error) {
 			return nil, fmt.Errorf("parse alert id: %w", err)
 		}
 
-		ms, err := parseInt64FromAny(item.Datetime.Date)
-		if err != nil {
-			return nil, fmt.Errorf("parse alert %q datetime: %w", id, err)
-		}
-
 		alerts = append(alerts, Alert{
 			ID:        id,
 			Level:     strings.TrimSpace(item.Level),
 			Message:   strings.TrimSpace(item.Formatted),
 			Source:    strings.TrimSpace(item.Source),
 			Dismissed: item.Dismissed,
-			Datetime:  time.UnixMilli(ms).UTC(),
+			Datetime:  item.Datetime.Time(),
 		})
 	}
 
@@ -2867,16 +2862,60 @@ func normalizeFingerprint(fingerprint string) (string, error) {
 	return normalized, nil
 }
 
+type mongoDate struct {
+	t time.Time
+}
+
+func (d *mongoDate) UnmarshalJSON(b []byte) error {
+	// {"$date": <number>} — most common TrueNAS form
+	var obj struct {
+		Date json.Number `json:"$date"`
+	}
+	if err := json.Unmarshal(b, &obj); err == nil && obj.Date != "" {
+		ms, err := obj.Date.Int64()
+		if err != nil {
+			return fmt.Errorf("mongoDate $date: %w", err)
+		}
+		d.t = time.UnixMilli(ms).UTC()
+		return nil
+	}
+	// plain string (RFC 3339)
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		if t, err2 := time.Parse(time.RFC3339, strings.TrimSpace(s)); err2 == nil {
+			d.t = t.UTC()
+		}
+		return nil
+	}
+	// bare number — epoch milliseconds
+	var n json.Number
+	if err := json.Unmarshal(b, &n); err == nil {
+		if ms, err2 := n.Int64(); err2 == nil {
+			d.t = time.UnixMilli(ms).UTC()
+		}
+	}
+	return nil
+}
+
+func (d mongoDate) String() string {
+	if d.t.IsZero() {
+		return ""
+	}
+	return d.t.Format(time.RFC3339)
+}
+
+func (d mongoDate) Time() time.Time { return d.t }
+
 type systemInfoResponse struct {
-	Hostname      string `json:"hostname"`
-	Version       string `json:"version"`
-	BuildTime     string `json:"buildtime"`
-	UptimeSeconds int64  `json:"uptime_seconds"`
-	SystemSerial  string `json:"system_serial"`
-	SystemVendor  string `json:"system_manufacturer"`
-	Cores         int    `json:"cores"`
-	PhysicalCores int    `json:"physical_cores"`
-	Physmem       int64  `json:"physmem"`
+	Hostname      string    `json:"hostname"`
+	Version       string    `json:"version"`
+	BuildTime     mongoDate `json:"buildtime"`
+	UptimeSeconds int64     `json:"uptime_seconds"`
+	SystemSerial  string    `json:"system_serial"`
+	SystemVendor  string    `json:"system_manufacturer"`
+	Cores         int       `json:"cores"`
+	PhysicalCores int       `json:"physical_cores"`
+	Physmem       int64     `json:"physmem"`
 }
 
 type poolResponse struct {
@@ -2918,9 +2957,7 @@ type alertResponse struct {
 	Formatted string          `json:"formatted"`
 	Source    string          `json:"source"`
 	Dismissed bool            `json:"dismissed"`
-	Datetime  struct {
-		Date json.RawMessage `json:"$date"`
-	} `json:"datetime"`
+	Datetime  mongoDate       `json:"datetime"`
 }
 
 type nestedValue struct {
